@@ -29,7 +29,7 @@ Die Bilder sind keine Fotos. Sie sind mit demselben Zeichencode wie auf dem Ger√
 
 | Bauteil | Anschluss |
 |---|---|
-| Board | Waveshare / Spotpear ESP32-C6-Touch-LCD-1.47 |
+| Board | Waveshare ESP32-C6-Touch-LCD-1.47 |
 | Display (JD9853, SPI) | SCLK 1, MOSI 2, CS 14, DC 15, RST 22, BL 23 |
 | Touch (AXS5106L), IMU (QMI8658) | I2C: SDA 18, SCL 19, Touch-RST 20, Touch-INT 21 |
 | BOOT-Taste | GPIO9 |
