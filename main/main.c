@@ -45,7 +45,7 @@ static const char *TAG = "horizon";
 #define RGB(r, g, b) ((uint16_t)__builtin_bswap16( \
     (uint16_t)((((r) & 0xF8) << 8) | (((g) & 0xFC) << 3) | ((b) >> 3))))
 #define COL_SKY     RGB(45, 130, 225)
-#define COL_GROUND  RGB(180, 105, 55)
+#define COL_GROUND  RGB(160, 105, 55)
 #define COL_WHITE   RGB(255, 255, 255)
 #define COL_BLACK   RGB(0, 0, 0)
 #define COL_YELLOW  RGB(255, 205, 0)
@@ -145,6 +145,32 @@ static void draw_num(int xr, int y, int v, int s, uint16_t c)
         digit(x, y, (a / div) % 10, s, c);
         x += 4 * s;
         div /= 10;
+    }
+}
+
+// Positive Zahl um den Mittelpunkt (cx, cy) gedreht gezeichnet. Die Schrift läuft entlang der
+// Horizontlinie: sn / cs = sin / cos des Rollwinkels. Rückwärts-Abbildung, daher ohne Lücken.
+static void draw_num_rot(int cx, int cy, int v, int sc, float sn, float cs, uint16_t col)
+{
+    const int a = abs(v);
+    const int n = ndigits(a);
+    const int tw = n * 4 * sc - sc;                // Textbreite in Pixel
+    const int th = 5 * sc;                         // Texthöhe in Pixel
+    const int r = (int)ceilf(sqrtf((float)(tw * tw + th * th)) * 0.5f) + 1;
+    for (int y = cy - r; y <= cy + r; y++) {
+        for (int x = cx - r; x <= cx + r; x++) {
+            float dx = (float)(x - cx), dy = (float)(y - cy);
+            float u = dx * cs - dy * sn + tw * 0.5f;       // Position im ungedrehten Text
+            float w = dx * sn + dy * cs + th * 0.5f;
+            if (u < 0.0f || w < 0.0f || u >= tw || w >= th) continue;
+            int di = (int)u / (4 * sc);
+            int lx = (int)u - di * 4 * sc;
+            if (lx >= 3 * sc) continue;                    // Lücke zwischen den Ziffern
+            int div = 1;
+            for (int k = 0; k < n - 1 - di; k++) div *= 10;
+            int dig = (a / div) % 10;
+            if (font3x5[dig] & (1 << (14 - (((int)w / sc) * 3 + lx / sc)))) px(x, y, col);
+        }
     }
 }
 
@@ -532,8 +558,12 @@ static void render(float roll, float pitch, const tapes_t *tp)
             ac2scr(-half, v + dir * 5, s, c, &ex, &ey); line(xa, ya, ex, ey, 2, COL_WHITE);
             ac2scr(half, v + dir * 5, s, c, &ex, &ey);  line(xb, yb, ex, ey, 2, COL_WHITE);
             int n = abs(m);
-            draw_num(xa - 5, ya - 5, n, 2, COL_WHITE);
-            draw_num(xb + 5 + num_w(n, 2) - 1, yb - 5, n, 2, COL_WHITE);
+            const float lw = num_w(n, 2) * 0.5f;       // halbe Textbreite
+            int lx, ly;
+            ac2scr(-half - 5.0f - lw, v, s, c, &lx, &ly);
+            draw_num_rot(lx, ly, n, 2, s, c, COL_WHITE);   // links, mitgedreht
+            ac2scr(half + 5.0f + lw, v, s, c, &lx, &ly);
+            draw_num_rot(lx, ly, n, 2, s, c, COL_WHITE);   // rechts, mitgedreht
         }
     }
 
