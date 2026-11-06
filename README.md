@@ -3,6 +3,18 @@
 Künstlicher Horizont im Stil eines Garmin G3X für das **Spotpear / Waveshare ESP32-C6-Touch-LCD-1.47**
 (172×320-Display, im Querformat 320×172). Geschrieben in C mit ESP-IDF, ohne LVGL.
 
+## Vorschau
+
+Hauptanzeige mit Speed-Band links, Höhenband und Variometer rechts und der Statuszeile unten:
+
+![Hauptanzeige](docs/main.png)
+
+QNH-Menü (Antippen des Displays):
+
+![QNH-Menü](docs/menu.png)
+
+Die Bilder sind keine Fotos. Sie sind mit demselben Zeichencode wie auf dem Gerät am PC gerendert, mit Beispielwerten (112 km/h, 1250 m, +1,5 m/s, QNH 1013,2).
+
 ## Funktionen
 
 - Horizont mit Nick-Leiter (5°-Schritte, Zahlen bei 10°/20°/30°) und mitdrehender Roll-Skala
