@@ -1,6 +1,6 @@
 # Künstlicher Horizont (Attitude Indicator)
 
-Künstlicher Horizont im Stil eines Garmin G3X für das **Spotpear / Waveshare ESP32-C6-Touch-LCD-1.47**
+Künstlicher Horizont im Stil eines Garmin Glascockpits für das Waveshare ESP32-C6-Touch-LCD-1.47**
 (172×320-Display, im Querformat 320×172). Geschrieben in C mit ESP-IDF, ohne LVGL.
 
 ## Vorschau
