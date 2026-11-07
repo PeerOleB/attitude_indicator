@@ -2,14 +2,23 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "driver/uart.h"
+#include "driver/gpio.h"
 #include "config.h"
 
 static const char *TAG = "sensors";
+
+#ifndef GPS_DEBUG
+#define GPS_DEBUG 0         // 1 = empfangene Rohdaten (hex + ASCII) im Monitor ausgeben
+#endif
+#ifndef GPS_AUTOBAUD
+#define GPS_AUTOBAUD 1      // 0 = bei GPS_BAUD bleiben, nicht durchprobieren
+#endif
 
 sensor_data_t g_sens;
 
@@ -193,6 +202,7 @@ static void gps_parse(char *s)
         for (char *p = s + 1; p < star; p++) cs ^= (uint8_t)*p;
         if (cs != (uint8_t)strtol(star + 1, NULL, 16)) return;
         *star = 0;
+        g_sens.gps_nmea++;
     }
     char *f[20];
     int nf = 0;
@@ -223,6 +233,69 @@ static void gps_parse(char *s)
     }
 }
 
+/* ---- UBX (binäres u-blox-Protokoll), Nachricht NAV-PVT ---- */
+typedef struct {
+    uint8_t st, cls, id, ca, cb;
+    uint16_t len, cnt;
+    uint8_t pl[100];
+} ubx_t;
+static ubx_t ux;
+
+static int32_t rd_i32(const uint8_t *p)
+{
+    return (int32_t)((uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24));
+}
+
+// NAV-PVT, 92 Bytes: fixType @20, flags @21 (Bit0 = Fix gültig), numSV @23,
+// hMSL @36 (mm), gSpeed @60 (mm/s), headMot @64 (1e-5 Grad)
+static void ubx_pvt(const uint8_t *p)
+{
+    const uint8_t fix = p[20];
+    const bool fix_ok = (p[21] & 1) && fix >= 2;           // mindestens 2D-Fix
+    g_sens.gps_sats = p[23];
+    g_sens.gps_alt_valid = (p[21] & 1) && fix >= 3;
+    if (g_sens.gps_alt_valid) g_sens.gps_alt_m = rd_i32(p + 36) * 0.001f;
+    if (fix_ok) {
+        g_sens.gps_speed_kmh = rd_i32(p + 60) * 0.0036f;   // mm/s -> km/h
+        g_sens.gps_track_deg = rd_i32(p + 64) * 1e-5f;
+        gps_last_us = esp_timer_get_time();
+        g_sens.gps_valid = true;
+    } else {
+        g_sens.gps_valid = false;
+    }
+}
+
+#define UBX_CK(b) do { ux.ca += (uint8_t)(b); ux.cb += ux.ca; } while (0)
+
+static void ubx_feed(uint8_t b)
+{
+    switch (ux.st) {
+    case 0: if (b == 0xB5) ux.st = 1; break;
+    case 1: ux.st = (b == 0x62) ? 2 : (b == 0xB5 ? 1 : 0); break;
+    case 2: ux.ca = 0; ux.cb = 0; ux.cls = b; UBX_CK(b); ux.st = 3; break;
+    case 3: ux.id = b; UBX_CK(b); ux.st = 4; break;
+    case 4: ux.len = b; UBX_CK(b); ux.st = 5; break;
+    case 5:
+        ux.len |= (uint16_t)b << 8; UBX_CK(b); ux.cnt = 0;
+        ux.st = (ux.len == 0) ? 7 : 6;
+        if (ux.len > 2000) ux.st = 0;                      // unplausibel -> neu synchronisieren
+        break;
+    case 6:
+        if (ux.cnt < sizeof(ux.pl)) ux.pl[ux.cnt] = b;     // zu lange Nachrichten nur prüfen, nicht speichern
+        UBX_CK(b);
+        if (++ux.cnt >= ux.len) ux.st = 7;
+        break;
+    case 7: ux.st = (b == ux.ca) ? 8 : (b == 0xB5 ? 1 : 0); break;
+    case 8:
+        if (b == ux.cb) {
+            g_sens.gps_nmea++;                             // gültige Nachricht gezählt
+            if (ux.cls == 0x01 && ux.id == 0x07 && ux.len == 92) ubx_pvt(ux.pl);
+        }
+        ux.st = (b == 0xB5) ? 1 : 0;
+        break;
+    }
+}
+
 static void gps_task(void *arg)
 {
     uart_config_t cfg = {
@@ -237,13 +310,56 @@ static void gps_task(void *arg)
     ESP_ERROR_CHECK(uart_param_config(GPS_UART, &cfg));
     ESP_ERROR_CHECK(uart_set_pin(GPS_UART, UART_PIN_NO_CHANGE, GPS_RX_PIN,
                                  UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
+    gpio_set_pull_mode(GPS_RX_PIN, GPIO_PULLUP_ONLY);   // offene Leitung bleibt ruhig auf "high"
+
+    // Baudrate: zuerst GPS_BAUD, bei fehlenden gültigen Sätzen werden gängige Raten durchprobiert.
+    const int bauds[] = { GPS_BAUD, 9600, 38400, 115200, 4800 };
+    int bi = 0;
+    bool locked = false;
+    int64_t t_switch = esp_timer_get_time();
+    g_sens.gps_baud = GPS_BAUD;
 
     char line[128];
     int n = 0;
     uint8_t buf[64];
     while (1) {
         int len = uart_read_bytes(GPS_UART, buf, sizeof(buf), pdMS_TO_TICKS(50));
+        if (len > 0) g_sens.gps_bytes += len;
+#if GPS_DEBUG
+        {
+            static int dbg_n = 0;
+            static int64_t dbg_t = 0;
+            int64_t nd = esp_timer_get_time();
+            if (len > 0 && nd - dbg_t > 1000000 && dbg_n < 30) {
+                dbg_t = nd;
+                dbg_n++;
+                char hx[3 * 24 + 1], as[25];
+                int m = len < 24 ? len : 24;
+                for (int i = 0; i < m; i++) {
+                    snprintf(hx + 3 * i, 4, "%02x ", buf[i]);
+                    as[i] = (buf[i] >= 32 && buf[i] < 127) ? (char)buf[i] : '.';
+                }
+                as[m] = 0;
+                ESP_LOGI(TAG, "RX @%d: %s| %s", (int)g_sens.gps_baud, hx, as);
+            }
+        }
+#endif
+        if (!locked) {
+            if (g_sens.gps_nmea >= 3) {
+                locked = true;
+                ESP_LOGI(TAG, "GPS-Daten erkannt bei %d Baud", g_sens.gps_baud);
+            } else if (GPS_AUTOBAUD && esp_timer_get_time() - t_switch > 4000000) {
+                bi = (bi + 1) % (int)(sizeof(bauds) / sizeof(bauds[0]));
+                if (bauds[bi] == GPS_BAUD && bi != 0) bi = (bi + 1) % (int)(sizeof(bauds) / sizeof(bauds[0]));
+                uart_set_baudrate(GPS_UART, bauds[bi]);
+                g_sens.gps_baud = bauds[bi];
+                t_switch = esp_timer_get_time();
+                ESP_LOGW(TAG, "Keine gueltigen GPS-Saetze (Bytes: %u), probiere %d Baud",
+                         (unsigned)g_sens.gps_bytes, bauds[bi]);
+            }
+        }
         for (int i = 0; i < len; i++) {
+            ubx_feed(buf[i]);                      // binäres UBX
             char ch = (char)buf[i];
             if (ch == '$') n = 0;
             if (ch == '\n' || ch == '\r') {

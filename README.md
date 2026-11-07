@@ -34,9 +34,9 @@ Die Bilder sind keine Fotos. Sie sind mit demselben Zeichencode wie auf dem Ger�
 | Touch (AXS5106L), IMU (QMI8658) | I2C: SDA 18, SCL 19, Touch-RST 20, Touch-INT 21 |
 | BOOT-Taste | GPIO9 |
 | Barometer BMP280 / BME280 | I2C-Bus (SDA 18, SCL 19), Adresse 0x76 oder 0x77 |
-| GPS (NMEA, 9600 Baud) | TX des GPS an **GPIO7** (`GPS_RX_PIN`), 3,3 V, GND |
+| GPS (u-blox, UBX NAV-PVT, 115200 Baud) | TX des GPS an **GPIO7** (`GPS_RX_PIN`), 3,3 V, GND |
 
-Das GPS wird nur gelesen. Das RX-Kabel des Moduls bleibt unbenutzt.
+Das GPS wird nur gelesen. Das RX-Kabel des Moduls bleibt unbenutzt. Unterstützt werden das binäre u-blox-Protokoll UBX (Nachricht NAV-PVT) und NMEA (RMC/GGA); die Baudrate stellt man mit `GPS_BAUD` ein.
 
 ## Bauen und flashen
 
@@ -89,7 +89,7 @@ Die Werte für Display und Achsen hängen von Panel und Einbaulage ab und müsse
     ├── CMakeLists.txt
     ├── config.h      Pins und Einstellungen
     ├── main.c        Zeichnen, Menü, Hauptschleife, Display, IMU
-    ├── sensors.c/.h  BMP280/BME280, Variometer, GPS (NMEA)
+    ├── sensors.c/.h  BMP280/BME280, Variometer, GPS (UBX/NMEA)
     ├── touch.c/.h    Touch-Treiber AXS5106L
     └── settings.c/.h Speichern im NVS
 ```

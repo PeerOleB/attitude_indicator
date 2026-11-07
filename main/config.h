@@ -44,7 +44,7 @@
 // GPS-TX-Leitung wird an diesen ESP-Pin angeschlossen. Bitte prüfen, ob der
 // Pin an Ihrer Stiftleiste herausgeführt und frei ist.
 #define GPS_RX_PIN     7
-#define GPS_BAUD       9600
+#define GPS_BAUD       115200
 #define GPS_UART       UART_NUM_1
 
 /* ===== BMP280 / Variometer ===== */
@@ -83,3 +83,5 @@
 #define VS_X           (W - VS_W)
 #define PPD            2.8f
 #define ROLL_R         78
+#define GPS_DEBUG 1
+#define GPS_AUTOBAUD 0

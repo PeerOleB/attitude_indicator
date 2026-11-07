@@ -1,5 +1,6 @@
 #pragma once
 #include <stdbool.h>
+#include <stdint.h>
 #include "driver/i2c_master.h"
 
 typedef struct {
@@ -16,6 +17,10 @@ typedef struct {
     volatile float gps_track_deg;
     volatile float gps_alt_m;      // Höhe über NN laut GPS
     volatile int   gps_sats;
+    // GPS-Diagnose
+    volatile uint32_t gps_bytes;   // empfangene Bytes am UART
+    volatile uint32_t gps_nmea;    // gültige Nachrichten (NMEA oder UBX, Prüfsumme stimmt)
+    volatile int      gps_baud;    // aktuelle Baudrate
 } sensor_data_t;
 
 extern sensor_data_t g_sens;

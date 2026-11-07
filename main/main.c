@@ -48,7 +48,7 @@ static const char *TAG = "horizon";
 #define COL_GROUND  RGB(160, 105, 55)
 #define COL_WHITE   RGB(255, 255, 255)
 #define COL_BLACK   RGB(0, 0, 0)
-#define COL_YELLOW  RGB(255, 205, 0)
+#define COL_YELLOW  RGB(245, 230, 65)
 #define COL_GRAY    RGB(150, 150, 150)
 #define COL_GREEN   RGB(60, 220, 60)
 #define COL_RED     RGB(255, 70, 70)
@@ -961,9 +961,10 @@ void app_main(void)
         ib ^= 1;
 
         if (++frames >= 60) {
-            ESP_LOGI(TAG, "%.1f fps | roll %.1f pitch %.1f | spd %.0f km/h alt %.1f m vs %.2f m/s | gps %d sats %d",
+            ESP_LOGI(TAG, "%.1f fps | roll %.1f pitch %.1f | spd %.0f km/h alt %.1f m vs %.2f m/s | gps %d sats %d | rx %u B, %u msg @%d",
                      frames * 1e6f / (now - fps_t), roll * RAD2DEG, pitch * RAD2DEG,
-                     tp.spd_kmh, tp.alt_m, tp.vs, (int)g_sens.gps_valid, (int)g_sens.gps_sats);
+                     tp.spd_kmh, tp.alt_m, tp.vs, (int)g_sens.gps_valid, (int)g_sens.gps_sats,
+                     (unsigned)g_sens.gps_bytes, (unsigned)g_sens.gps_nmea, (int)g_sens.gps_baud);
             frames = 0;
             fps_t = now;
         }
