@@ -365,6 +365,7 @@ typedef struct {
     float alt_m;   bool alt_ok;
     float vs;      bool vs_ok;
     bool  gps;                 // GPS empfängt gültige Daten
+    int   sats;                // Anzahl Satelliten
     float qnh;                 // eingestelltes QNH in hPa
 } tapes_t;
 
@@ -506,7 +507,22 @@ static void draw_status(const tapes_t *tp)
     const int x0 = SPD_W, x1 = ALT_X, y0 = H - 18;
     box(x0, y0, x1 - x0, 18, COL_BLACK);
     box(x0, y0, x1 - x0, 1, COL_GRAY);
-    if (tp->gps) draw_text(x0 + 8, y0 + 3, "GPS", 2, COL_GREEN);
+    // GPS-Piktogramm (Standort-Pin): rot ohne Fix, grün mit Fix + Satellitenzahl
+    const uint16_t gc = tp->gps ? COL_GREEN : COL_RED;
+    const int px = x0 + 14, py = y0 + 2;               // Mitte des Pins, Oberkante
+    for (int r = 0; r < 12; r++) {
+        int hw;
+        if (r < 9) { float d = (float)(r - 4); hw = (int)(sqrtf(25.0f - d * d) + 0.5f); }
+        else hw = 11 - r;                               // Spitze nach unten
+        box(px - hw, py + r, 2 * hw + 1, 1, gc);
+    }
+    box(px - 1, py + 3, 3, 3, COL_BLACK);               // Loch im Pin
+    if (tp->gps) {
+        char sb[16];
+        int ns = tp->sats < 0 ? 0 : (tp->sats > 99 ? 99 : tp->sats);
+        snprintf(sb, sizeof(sb), "%02d", ns);
+        draw_text(px + 10, y0 + 3, sb, 2, COL_GREEN);
+    }
     char b[24];
     snprintf(b, sizeof(b), "QNH %.1f", tp->qnh);
     draw_text(x1 - 8 - text_w(b, 2) + 1, y0 + 3, b, 2, COL_GREEN);
@@ -934,6 +950,7 @@ void app_main(void)
         tp.alt_m = 1250.0f + 60.0f * sinf(0.2f * t);    tp.alt_ok = true;
         tp.vs = 2.5f * sinf(0.5f * t);                  tp.vs_ok = true;
         tp.gps = true;
+        tp.sats = 9;
 #else
         tp.spd_ok = g_sens.gps_valid;
         if (tp.spd_ok) {
@@ -948,6 +965,7 @@ void app_main(void)
         tp.vs_ok = g_sens.baro_ok;
         tp.vs = g_sens.vs_ms;
         tp.gps = g_sens.gps_valid;
+        tp.sats = g_sens.gps_sats;
 #endif
         tp.qnh = sensors_get_qnh_hpa();
 
