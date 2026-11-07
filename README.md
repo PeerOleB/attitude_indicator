@@ -1,6 +1,6 @@
 # Künstlicher Horizont (Attitude Indicator)
 
-Künstlicher Horizont im Stil eines Garmin Glascockpits für das Waveshare ESP32-C6-Touch-LCD-1.47**
+Künstlicher Horizont im Stil eines Garmin G3X für das **Spotpear / Waveshare ESP32-C6-Touch-LCD-1.47**
 (172×320-Display, im Querformat 320×172). Geschrieben in C mit ESP-IDF, ohne LVGL.
 
 ## Vorschau
@@ -20,7 +20,7 @@ Die Bilder sind keine Fotos. Sie sind mit demselben Zeichencode wie auf dem Ger�
 - Horizont mit Nick-Leiter (5°-Schritte, Zahlen bei 10°/20°/30°) und mitdrehender Roll-Skala
 - **Speed-Band** links (GPS-Geschwindigkeit über Grund, km/h oder Knoten)
 - **Höhenband** rechts (Barometer, Meter oder Fuß) mit **Variometer** (±5 m/s)
-- **Statuszeile** unten: "GPS" bei gültigem Empfang, aktuelles QNH
+- **Statuszeile** unten: GPS-Pin (rot ohne Fix, grün mit Fix und Anzahl der Satelliten), aktuelles QNH
 - **Touch-Menü** zum Einstellen des QNH (Antippen des Displays)
 - Fluglage aus dem Beschleunigungs- und Drehratensensor (QMI8658) per Komplementärfilter
 - QNH und Trimmung bleiben nach dem Neustart erhalten (NVS)
@@ -29,7 +29,7 @@ Die Bilder sind keine Fotos. Sie sind mit demselben Zeichencode wie auf dem Ger�
 
 | Bauteil | Anschluss |
 |---|---|
-| Board | Waveshare ESP32-C6-Touch-LCD-1.47 |
+| Board | Waveshare / Spotpear ESP32-C6-Touch-LCD-1.47 |
 | Display (JD9853, SPI) | SCLK 1, MOSI 2, CS 14, DC 15, RST 22, BL 23 |
 | Touch (AXS5106L), IMU (QMI8658) | I2C: SDA 18, SCL 19, Touch-RST 20, Touch-INT 21 |
 | BOOT-Taste | GPIO9 |
