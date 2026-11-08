@@ -60,6 +60,25 @@ bool settings_load_trim(float *roll_rad, float *pitch_rad)
     return false;
 }
 
+bool settings_load_bias(float b[3])
+{
+    float x, y, z;
+    if (get_f("gyro_bx", &x) && get_f("gyro_by", &y) && get_f("gyro_bz", &z) &&
+        fabsf(x) < 0.2f && fabsf(y) < 0.2f && fabsf(z) < 0.2f) {
+        b[0] = x; b[1] = y; b[2] = z;
+        return true;
+    }
+    return false;
+}
+
+void settings_save_bias(const float b[3])
+{
+    set_f("gyro_bx", b[0]);
+    set_f("gyro_by", b[1]);
+    set_f("gyro_bz", b[2]);
+    if (ok) nvs_commit(h);
+}
+
 void settings_save_qnh(float qnh_hpa)
 {
     set_f("qnh", qnh_hpa);

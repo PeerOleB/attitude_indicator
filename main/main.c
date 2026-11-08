@@ -367,6 +367,7 @@ typedef struct {
     bool  gps;                 // GPS empfängt gültige Daten
     int   sats;                // Anzahl Satelliten
     float qnh;                 // eingestelltes QNH in hPa
+    float slip;                // Kugel: -1 (links) .. +1 (rechts)
 } tapes_t;
 
 static void scale_init(void)
@@ -528,6 +529,25 @@ static void draw_status(const tapes_t *tp)
     draw_text(x1 - 8 - text_w(b, 2) + 1, y0 + 3, b, 2, COL_GREEN);
 }
 
+/* ---- Slip/Skid-Anzeige (Kugel) unter dem Rollzeiger ---- */
+static void draw_slip(float slip)
+{
+    const int bx = CX - 15, by = CY - ROLL_R + 14, bw = 31, bh = 11;
+    // shade(bx, bx + bw, by, by + bh);                   // halbtransparent wie die Bänder
+    box(bx, by, bw, 1, COL_WHITE);
+    box(bx, by + bh - 1, bw, 1, COL_WHITE);
+    box(bx, by, 1, bh, COL_WHITE);
+    box(bx + bw - 1, by, 1, bh, COL_WHITE);
+    box(CX - 5, by, 1, bh, COL_WHITE);                 // Mittenmarken
+    box(CX + 5, by, 1, bh, COL_WHITE);
+    if (slip > 1.0f) slip = 1.0f;
+    if (slip < -1.0f) slip = -1.0f;
+    const int cx = CX + (int)lroundf(slip * 10.0f), cy = by + bh / 2;
+    for (int dy = -3; dy <= 3; dy++)
+        for (int dx = -3; dx <= 3; dx++)
+            if (dx * dx + dy * dy <= 11) box(cx + dx, cy + dy, 1, 1, COL_WHITE);
+}
+
 static void render(float roll, float pitch, const tapes_t *tp)
 {
     const float s = sinf(roll), c = cosf(roll);
@@ -613,6 +633,7 @@ static void render(float roll, float pitch, const tapes_t *tp)
     draw_alt_tape(tp->alt_m, tp->alt_ok);
     draw_vario(tp->vs, tp->vs_ok);
     draw_status(tp);
+    draw_slip(tp->slip);
 
     // --- Flugzeugsymbol ---
     draw_aircraft(5, 2, COL_BLACK);
@@ -744,7 +765,154 @@ static void i2c_devices_init(void)
     }
 }
 
+#ifndef IMU_COMP_GAIN
+#define IMU_COMP_GAIN 1.0f      // 0 = Korrektur aus, -1 = Vorzeichen umkehren
+#endif
 static float g_roll = 0, g_pitch = 0;
+static float g_slip = 0;                    // gefilterte Kugelposition (-1..1)
+// GPS-Geschwindigkeit (m/s) und deren zeitliche Änderung, für die Beschleunigungskorrektur
+static float g_imu_v = 0, g_imu_vdot = 0;
+static bool  g_imu_vok = false;
+
+#ifndef IMU_ACC_TAU
+#define IMU_ACC_TAU 4.0f        // Zeitkonstante der Lagekorrektur durch den Beschleunigungssensor (s)
+#endif
+#ifndef IMU_CAL_TIME
+#define IMU_CAL_TIME 1.5f       // Dauer der Gyro-Kalibrierung nach dem Start (s), Gerät ruhig halten
+#endif
+
+/* ---- Lageschätzung: Mahony-Filter (Quaternion) mit Bias-Schätzung ---- */
+static float qw = 1, qx = 0, qy = 0, qz = 0;     // Lage Körper -> Erde (NED)
+static float g_bias[3] = {0, 0, 0};              // Gyro-Bias (rad/s), Achsen vorn/rechts/unten
+static bool  g_bias_new = false;                 // frisch kalibriert -> speichern
+static float g_trust = 0, g_roll_a = 0, g_pitch_a = 0;   // nur zur Diagnose im Log
+static float cal_t = 0, cal_sum[3], cal_min[3], cal_max[3];
+static int   cal_n = 0;
+static bool  cal_done = false;
+static float fast_t = 0;                         // Schnellausrichtung nach dem Start (s)
+
+/* ATT_BEGIN */
+static void att_from_euler(float r, float p)
+{
+    const float cr = cosf(r / 2), sr = sinf(r / 2), cp = cosf(p / 2), sp = sinf(p / 2);
+    qw = cr * cp; qx = sr * cp; qy = cr * sp; qz = -sr * sp;
+}
+
+static void att_fuse(float fx, float fy, float fz, float p, float q, float rr, float dt)
+{
+    if (dt > 0.1f) dt = 0.1f;
+    float gvx = -fx, gvy = -fy, gvz = -fz;           // gemessene "Lotrechte" (in g)
+
+    // Slip/Skid: seitliche Beschleunigung relativ zur Gesamtbeschleunigung (unkorrigiert, wie eine
+    // echte Libelle). Voller Ausschlag bei etwa 0,15 g.
+    {
+        float gn = sqrtf(gvx * gvx + gvy * gvy + gvz * gvz);
+        if (gn < 0.5f) gn = 0.5f;
+        float tgt = (gvy / gn) / 0.15f;
+        g_slip += (tgt - g_slip) * (dt / (0.25f + dt));
+    }
+
+    // --- Start: Gyro-Bias messen, solange das Gerät ruhig gehalten wird ---
+    if (!cal_done) {
+        const float gyro[3] = {p, q, rr};
+        if (cal_n == 0) {
+            for (int i = 0; i < 3; i++) { cal_sum[i] = 0; cal_min[i] = cal_max[i] = gyro[i]; }
+        }
+        for (int i = 0; i < 3; i++) {
+            cal_sum[i] += gyro[i];
+            if (gyro[i] < cal_min[i]) cal_min[i] = gyro[i];
+            if (gyro[i] > cal_max[i]) cal_max[i] = gyro[i];
+        }
+        cal_n++;
+        cal_t += dt;
+        // Lage währenddessen direkt aus dem Beschleunigungssensor
+        g_roll_a = atan2f(gvy, gvz);
+        g_pitch_a = atan2f(-gvx, sqrtf(gvy * gvy + gvz * gvz));
+        att_from_euler(g_roll_a, g_pitch_a);
+        if (cal_t >= IMU_CAL_TIME && cal_n >= 10) {
+            bool stable = true;
+            float mean[3];
+            for (int i = 0; i < 3; i++) {
+                mean[i] = cal_sum[i] / cal_n;
+                if (cal_max[i] - cal_min[i] > 0.12f || fabsf(mean[i]) > 0.1f) stable = false;
+            }
+            if (stable) {
+                for (int i = 0; i < 3; i++) g_bias[i] = mean[i];
+                g_bias_new = true;
+            }
+            cal_done = true;
+            fast_t = 3.0f;                           // 3 s lang schnell einrasten
+        }
+        g_roll = g_roll_a; g_pitch = g_pitch_a;
+        return;
+    }
+
+    const float wx = p - g_bias[0], wy = q - g_bias[1], wz = rr - g_bias[2];
+
+    // --- Fahrzeugbeschleunigung herausrechnen: a = w x V + dV/dt mit V = (v, 0, 0) ---
+    // Der Beschleunigungssensor misst Schwerkraft MINUS Fahrzeugbeschleunigung.
+    if (g_imu_vok && g_imu_v > 2.0f) {
+        gvx += IMU_COMP_GAIN * g_imu_vdot / 9.81f;           // Längsbeschleunigung
+        gvy += IMU_COMP_GAIN * wz * g_imu_v / 9.81f;         // Zentripetal (Kurve)
+        gvz -= IMU_COMP_GAIN * wy * g_imu_v / 9.81f;         // Zentripetal (Nicken)
+    }
+    const float gm = sqrtf(gvx * gvx + gvy * gvy + gvz * gvz);
+    g_roll_a = atan2f(gvy, gvz);
+    g_pitch_a = atan2f(-gvx, sqrtf(gvy * gvy + gvz * gvz));
+
+    // --- Vertrauen in den Beschleunigungssensor: nur bei ruhigem Geradeausflug hoch ---
+    float wgt = 1.0f - fabsf(gm - 1.0f) / 0.10f;             // Betrag nahe 1 g
+    if (wgt < 0.0f) wgt = 0.0f;
+    const float rate = sqrtf(wx * wx + wy * wy + wz * wz);   // Drehrate (rad/s)
+    const float wr = 1.0f / (1.0f + (rate / 0.15f) * (rate / 0.15f));
+    float wa = 1.0f;                                         // starkes Bremsen/Beschleunigen
+    if (g_imu_vok) { float k = g_imu_vdot / 1.5f; wa = 1.0f / (1.0f + k * k); }
+    const float trust = wgt * wr * wa;
+    g_trust = trust;
+
+    // geschätzte Lotrechte im Körpersystem
+    const float vx = 2 * (qx * qz - qw * qy);
+    const float vy = 2 * (qy * qz + qw * qx);
+    const float vz = qw * qw - qx * qx - qy * qy + qz * qz;
+    float cx = 0, cy = 0, cz = 0;                            // Korrekturdrehrate
+    if (gm > 0.3f) {
+        const float mx = gvx / gm, my = gvy / gm, mz = gvz / gm;
+        const float ex = my * vz - mz * vy;
+        const float ey = mz * vx - mx * vz;
+        const float ez = mx * vy - my * vx;
+        const float kp0 = 1.0f / IMU_ACC_TAU;
+        float kp = kp0 * trust;
+        if (fast_t > 0) {
+            fast_t -= dt;
+            if (kp < 2.0f * trust) kp = 2.0f * trust;        // Schnellausrichtung nach dem Start (nur bei ruhigem Zustand)
+        } else {
+            const float ki = 0.25f * kp0 * kp0 * trust;      // Bias nachlernen, nur bei hohem Vertrauen
+            g_bias[0] -= ki * ex * dt; g_bias[1] -= ki * ey * dt; g_bias[2] -= ki * ez * dt;
+            for (int i = 0; i < 3; i++) {
+                if (g_bias[i] > 0.1f) g_bias[i] = 0.1f;
+                if (g_bias[i] < -0.1f) g_bias[i] = -0.1f;
+            }
+        }
+        cx = kp * ex; cy = kp * ey; cz = kp * ez;
+    }
+
+    // --- Quaternion integrieren ---
+    const float ox = wx + cx, oy = wy + cy, oz = wz + cz;
+    const float dqw = 0.5f * (-qx * ox - qy * oy - qz * oz);
+    const float dqx = 0.5f * ( qw * ox + qy * oz - qz * oy);
+    const float dqy = 0.5f * ( qw * oy - qx * oz + qz * ox);
+    const float dqz = 0.5f * ( qw * oz + qx * oy - qy * ox);
+    qw += dqw * dt; qx += dqx * dt; qy += dqy * dt; qz += dqz * dt;
+    const float n = 1.0f / sqrtf(qw * qw + qx * qx + qy * qy + qz * qz);
+    qw *= n; qx *= n; qy *= n; qz *= n;
+
+    g_roll = atan2f(2 * (qw * qx + qy * qz), 1 - 2 * (qx * qx + qy * qy));
+    float sp = 2 * (qw * qy - qz * qx);
+    if (sp > 1.0f) sp = 1.0f;
+    if (sp < -1.0f) sp = -1.0f;
+    g_pitch = asinf(sp);
+}
+/* ATT_END */
 
 static void imu_update(float dt)
 {
@@ -758,27 +926,8 @@ static void imu_update(float dt)
     float ax = r[0] * ka, ay = r[1] * ka, az = r[2] * ka;
     float gx = r[3] * kg, gy = r[4] * kg, gz = r[5] * kg;
 
-    float fx = MAP_FWD(ax, ay, az), fy = MAP_RIGHT(ax, ay, az), fz = MAP_DOWN(ax, ay, az);
-    float p = MAP_FWD(gx, gy, gz), q = MAP_RIGHT(gx, gy, gz), rr = MAP_DOWN(gx, gy, gz);
-
-    float gvx = -fx, gvy = -fy, gvz = -fz;
-    float roll_a = atan2f(gvy, gvz);
-    float pitch_a = atan2f(-gvx, sqrtf(gvy * gvy + gvz * gvz));
-
-    float sp = sinf(g_roll), cp = cosf(g_roll);
-    float tt = tanf(g_pitch);
-    if (tt > 5.0f) tt = 5.0f;
-    if (tt < -5.0f) tt = -5.0f;
-    g_roll  += (p + (q * sp + rr * cp) * tt) * dt;
-    g_pitch += (q * cp - rr * sp) * dt;
-
-    const float tau = 0.8f;
-    float k = dt / (tau + dt);
-    float dr = roll_a - g_roll;
-    while (dr > PI_F) dr -= 2 * PI_F;
-    while (dr < -PI_F) dr += 2 * PI_F;
-    g_roll += k * dr;
-    g_pitch += k * (pitch_a - g_pitch);
+    att_fuse(MAP_FWD(ax, ay, az), MAP_RIGHT(ax, ay, az), MAP_DOWN(ax, ay, az),
+             MAP_FWD(gx, gy, gz), MAP_RIGHT(gx, gy, gz), MAP_DOWN(gx, gy, gz), dt);
 }
 
 /* ------------------------------------------------------------------ */
@@ -839,6 +988,11 @@ void app_main(void)
 
     const bool demo = FORCE_DEMO || !imu_ok;
     float roll_trim = 0, pitch_trim = 0;
+    float bias_saved[3] = {0, 0, 0};
+    if (settings_load_bias(bias_saved)) {
+        for (int i = 0; i < 3; i++) g_bias[i] = bias_saved[i];
+        ESP_LOGI(TAG, "Gyro-Bias geladen: %.2f %.2f %.2f Grad/s", bias_saved[0] * RAD2DEG, bias_saved[1] * RAD2DEG, bias_saved[2] * RAD2DEG);
+    }
     {
         float r, p;
         if (settings_load_trim(&r, &p)) {
@@ -933,7 +1087,36 @@ void app_main(void)
             roll = 35.0f * DEG2RAD * sinf(0.7f * t);
             pitch = 15.0f * DEG2RAD * sinf(0.45f * t);
         } else {
+            {
+                // GPS-Geschwindigkeit und -Beschleunigung für die Korrektur bereitstellen
+                static uint32_t last_cnt = 0;
+                static int64_t last_t = 0;
+                static float last_v = 0;
+                g_imu_vok = g_sens.gps_valid;
+                g_imu_v = g_sens.gps_speed_kmh / 3.6f;
+                if (g_sens.gps_nmea != last_cnt) {
+                    last_cnt = g_sens.gps_nmea;
+                    float gdt = (now - last_t) * 1e-6f;
+                    if (gdt >= 0.5f && gdt < 3.0f) {
+                        float a = (g_imu_v - last_v) / gdt;
+                        g_imu_vdot += 0.5f * (a - g_imu_vdot);      // glätten
+                        last_t = now; last_v = g_imu_v;
+                    } else if (gdt >= 3.0f) {
+                        g_imu_vdot = 0; last_t = now; last_v = g_imu_v;
+                    }
+                }
+                if (!g_imu_vok) g_imu_vdot = 0;
+            }
             imu_update(dt);
+            if (g_bias_new) {                       // Start-Kalibrierung erfolgreich
+                g_bias_new = false;
+                ESP_LOGI(TAG, "Gyro-Bias gemessen: %.2f %.2f %.2f Grad/s", g_bias[0] * RAD2DEG, g_bias[1] * RAD2DEG, g_bias[2] * RAD2DEG);
+                if (fabsf(g_bias[0] - bias_saved[0]) > 0.003f || fabsf(g_bias[1] - bias_saved[1]) > 0.003f ||
+                    fabsf(g_bias[2] - bias_saved[2]) > 0.003f) {
+                    for (int i = 0; i < 3; i++) bias_saved[i] = g_bias[i];
+                    settings_save_bias(bias_saved);
+                }
+            }
             if (trim_req) {
                 roll_trim = g_roll;
                 pitch_trim = g_pitch;
@@ -967,6 +1150,7 @@ void app_main(void)
         tp.gps = g_sens.gps_valid;
         tp.sats = g_sens.gps_sats;
 #endif
+        tp.slip = demo ? 0.6f * sinf(0.4f * t) : g_slip;
         tp.qnh = sensors_get_qnh_hpa();
 
         cur = fb[ib];
@@ -979,8 +1163,9 @@ void app_main(void)
         ib ^= 1;
 
         if (++frames >= 60) {
-            ESP_LOGI(TAG, "%.1f fps | roll %.1f pitch %.1f | spd %.0f km/h alt %.1f m vs %.2f m/s | gps %d sats %d | rx %u B, %u msg @%d",
+            ESP_LOGI(TAG, "%.1f fps | roll %.1f pitch %.1f (acc %.1f %.1f, trust %.2f) | spd %.0f km/h alt %.1f m vs %.2f m/s | gps %d sats %d | rx %u B, %u msg @%d",
                      frames * 1e6f / (now - fps_t), roll * RAD2DEG, pitch * RAD2DEG,
+                     g_roll_a * RAD2DEG, g_pitch_a * RAD2DEG, g_trust,
                      tp.spd_kmh, tp.alt_m, tp.vs, (int)g_sens.gps_valid, (int)g_sens.gps_sats,
                      (unsigned)g_sens.gps_bytes, (unsigned)g_sens.gps_nmea, (int)g_sens.gps_baud);
             frames = 0;

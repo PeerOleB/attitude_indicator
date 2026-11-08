@@ -20,6 +20,7 @@ Die Bilder sind keine Fotos. Sie sind mit demselben Zeichencode wie auf dem Ger�
 - Horizont mit Nick-Leiter (5°-Schritte, Zahlen bei 10°/20°/30°) und mitdrehender Roll-Skala
 - **Speed-Band** links (GPS-Geschwindigkeit über Grund, km/h oder Knoten)
 - **Höhenband** rechts (Barometer, Meter oder Fuß) mit **Variometer** (±5 m/s)
+- **Slip/Skid-Kugel** unter dem Rollzeiger (Libelle: zeigt, ob die Kurve koordiniert ist)
 - **Statuszeile** unten: GPS-Pin (rot ohne Fix, grün mit Fix und Anzahl der Satelliten), aktuelles QNH
 - **Touch-Menü** zum Einstellen des QNH (Antippen des Displays)
 - Fluglage aus dem Beschleunigungs- und Drehratensensor (QMI8658) per Komplementärfilter
