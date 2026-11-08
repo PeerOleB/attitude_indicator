@@ -13,7 +13,11 @@ QNH-Menü (Antippen des Displays):
 
 ![QNH-Menü](docs/menu.png)
 
-Die Bilder sind keine Fotos. Sie sind mit demselben Zeichencode wie auf dem Gerät am PC gerendert, mit Beispielwerten (112 km/h, 1250 m, +1,5 m/s, QNH 1013,2).
+Video vom echten Gerät (Bild anklicken):
+
+[![Video: Gerät im Betrieb](docs/video_vorschau.jpg)](docs/video_2026-11-08_20-06-32.mp4)
+
+Die beiden Bilder oben sind keine Fotos. Sie sind mit demselben Zeichencode wie auf dem Gerät am PC gerendert, mit Beispielwerten (112 km/h, 1250 m, +1,5 m/s, QNH 1013,2).
 
 ## Funktionen
 
@@ -64,10 +68,24 @@ Alle Einstellungen stehen in `main/config.h`:
 | `GPS_RX_PIN`, `GPS_BAUD` | GPS-Anschluss |
 | `SPEED_KT`, `ALT_FT` | Einheiten (km/h oder Knoten, Meter oder Fuß) |
 | `VARIO_ALPHA`, `VARIO_BETA` | Filter des Variometers |
+| `IMU_ACC_TAU` | Zeitkonstante, mit der der Beschleunigungssensor die Lage nachführt (Standard 4 s; größer = ruhiger, aber langsamere Korrektur) |
+| `IMU_COMP_GAIN` | Stärke der GPS-Kompensation von Kurven- und Bremsbeschleunigung (1 = an, 0 = aus, −1 = Vorzeichen umkehren) |
+| `IMU_CAL_TIME` | Dauer der Gyro-Kalibrierung nach dem Start in Sekunden (Standard 1,5) |
 | `FORCE_DEMO`, `DEMO_SENSORS` | Simulierte Fluglage und simulierte Sensorwerte zum Testen |
 | `TOUCH_DEBUG`, `TOUCH_FLIP_X`, `TOUCH_FLIP_Y` | Touch-Diagnose und Spiegelung |
 
 Die Werte für Display und Achsen hängen von Panel und Einbaulage ab und müssen für Ihr Gerät einmal angepasst werden.
+
+## Lageschätzung
+
+Die Fluglage kommt aus dem Gyro und dem Beschleunigungssensor der IMU, zusammengeführt in einem Mahony-Filter (Quaternion).
+
+- **Gyro-Bias:** Direkt nach dem Start misst das Gerät 1,5 s lang den Nullpunkt des Gyros. Dafür muss es ruhig liegen oder gehalten werden. Der Wert wird im NVS gespeichert (nur bei merklicher Änderung) und im Betrieb bei ruhigem Geradeausflug nachgelernt. War der Start unruhig, gilt der gespeicherte Wert.
+- **Vertrauen in den Beschleunigungssensor:** Er misst Schwerkraft minus Fahrzeugbeschleunigung. In Kurven und beim Bremsen verfälscht das die Lotrechte. Der Filter vertraut ihm deshalb nur bei ruhigem Zustand (Betrag nahe 1 g, geringe Drehrate, kaum Geschwindigkeitsänderung) und folgt sonst dem Gyro.
+- **GPS-Kompensation:** Mit gültigem Fix wird die Fahrzeugbeschleunigung aus GPS-Geschwindigkeit und Drehrate berechnet und herausgerechnet. Ohne Fix entfällt das, dann können lange Kurven die Anzeige langsam verfälschen.
+- **Slip/Skid-Kugel:** Zeigt die seitliche Beschleunigung ohne Kompensation, wie eine echte Libelle. Im Auto schlägt sie in Kurven aus, im Flugzeug bleibt sie in der koordinierten Kurve mittig.
+
+Das Log im Monitor zeigt Roll und Nicken, die vom Beschleunigungssensor allein gesehene Lage (`acc`) und das aktuelle Vertrauen (`trust`). Das hilft beim Abstimmen von `IMU_ACC_TAU`.
 
 ## Bedienung
 

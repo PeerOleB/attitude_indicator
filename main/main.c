@@ -45,7 +45,7 @@ static const char *TAG = "horizon";
 #define RGB(r, g, b) ((uint16_t)__builtin_bswap16( \
     (uint16_t)((((r) & 0xF8) << 8) | (((g) & 0xFC) << 3) | ((b) >> 3))))
 #define COL_SKY     RGB(45, 130, 225)
-#define COL_GROUND  RGB(160, 105, 55)
+#define COL_GROUND  RGB(185, 125, 65)
 #define COL_WHITE   RGB(255, 255, 255)
 #define COL_BLACK   RGB(0, 0, 0)
 #define COL_YELLOW  RGB(245, 230, 65)
@@ -533,7 +533,7 @@ static void draw_status(const tapes_t *tp)
 static void draw_slip(float slip)
 {
     const int bx = CX - 15, by = CY - ROLL_R + 14, bw = 31, bh = 11;
-    // shade(bx, bx + bw, by, by + bh);                   // halbtransparent wie die Bänder
+    shade(bx, bx + bw, by, by + bh);                   // halbtransparent wie die Bänder
     box(bx, by, bw, 1, COL_WHITE);
     box(bx, by + bh - 1, bw, 1, COL_WHITE);
     box(bx, by, 1, bh, COL_WHITE);
